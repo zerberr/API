@@ -1,3 +1,3 @@
 [submodule "thrift"]
 	path = thrift
-	url = ../Third-party/thrift.git
+	url = https://github.com/CREDITSCOM/thrift
