@@ -5,8 +5,9 @@
 
 namespace csconnector
 {
-	struct APIHandlerBase
+    class APIHandlerBase
 	{
+    public:
 		enum class APIRequestStatusType : uint8_t
 		{
 			SUCCESS,

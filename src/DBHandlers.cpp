@@ -1,254 +1,210 @@
 #include "DBHandlers.h"
-#include <csdb/csdb.h>
+
+// csdb
+#include <csdb/wallet.h>
+#include <csdb/pool.h>
+#include <csdb/transaction.h>
+#include <csdb/currency.h>
+#include <csdb/amount.h>
+#include <csdb/address.h>
+
 #include "csconnector/csconnector.h"
 #include <algorithm>
+#include <tuple>
 #include <cstring>
 
 using namespace api;
 
-namespace db_handlers
+csdb::Storage DbHandlers::s_storage{};
+
+void DbHandlers::init()
 {
-	void init()
-	{
-		using namespace csconnector;
+    const bool isStorageOpen = s_storage.open();
 
-		registerHandler<Commands::BalanceGet>(BalanceGet);
-		registerHandler<Commands::TransactionGet>(TransactionGet);
-		registerHandler<Commands::TransactionsGet>(TransactionsGet);
-		registerHandler<Commands::PoolGet>(PoolGet);
-		registerHandler<Commands::PoolListGet>(PoolListGet);
-	}
+    std::string message;
+    if (isStorageOpen)
+    {
+        message = "Storage is opened normal";
 
-	void deinit()
-	{
-		using namespace csconnector;
+        using namespace csconnector;
 
-		unregisterHandler<Commands::BalanceGet>();
-		unregisterHandler<Commands::TransactionGet>();
-		unregisterHandler<Commands::TransactionsGet>();
-		unregisterHandler<Commands::PoolGet>();
-		unregisterHandler<Commands::PoolListGet>();
-	}
+        registerHandler<Commands::BalanceGet>(BalanceGet);
+        registerHandler<Commands::TransactionGet>(TransactionGet);
+        registerHandler<Commands::TransactionsGet>(TransactionsGet);
+        registerHandler<Commands::PoolInfoGet>(PoolInfoGet);
+        registerHandler<Commands::PoolTransactionsGet>(PoolTransactionsGet);
+        registerHandler<Commands::PoolListGet>(PoolListGet);
+    }
+    else
+    {
+        message += "Storage is not opedened. Reason: " + s_storage.last_error_message();
+    }
 
-	void BalanceGet(BalanceGetResult& _return, const Address& address, const Currency& currency)
-	{
-		csdb::Balance balance = {};
+    std::cout << message << std::endl;
+}
 
-		memcpy(balance.A_source, address.c_str(), std::min((size_t)MAX_STR, address.length()));
-		memcpy(balance.Currency, currency.c_str(), std::min((size_t)MAX_STR, currency.length()));
+void DbHandlers::deinit()
+{
+    using namespace csconnector;
 
-		csdb::GetBalance(&balance);
+    unregisterHandler<Commands::BalanceGet>();
+    unregisterHandler<Commands::TransactionGet>();
+    unregisterHandler<Commands::TransactionsGet>();
+    unregisterHandler<Commands::PoolInfoGet>();
+    unregisterHandler<Commands::PoolTransactionsGet>();
+    unregisterHandler<Commands::PoolListGet>();
+}
 
-		_return.amount.integral = (int32_t)balance.amount;
-		_return.amount.fraction = (int64_t)balance.amount1;
-	}
+void DbHandlers::BalanceGet(BalanceGetResult& _return, const Address& address, const Currency& currency)
+{
+    const csdb::Wallet wallet = s_storage.wallet(csdb::Address::from_hex(address));
+//    const csdb::Wallet wallet = s_storage.wallet(csdb::Address::from_string(address)); // раскомментировать когда добавится
+    const csdb::Amount amount = wallet.amount(csdb::Currency(currency));
+    _return.amount.integral   = amount.integral();
+    _return.amount.fraction   = amount.fraction();
+}
 
-	// NOTE: uuid is struct on Windows, but array on Unix
-	// TODO: We've for some reason refused from boost::uuid, 
-	// so another cross-platform library is needed
+void DbHandlers::TransactionGet(TransactionGetResult& _return, const TransactionId& transactionId)
+{
+    const csdb::TransactionID tempTransactionId; // =  csdb::TransactionID::from_string(transactionId); // раскомментить когда появится
 
-#ifdef _MSC_VER
+    const csdb::Transaction& transaction = s_storage.transaction(tempTransactionId);
 
-	void string_to_uuid(const std::string& uuid_str, uuid_t& uuid)
-	{
-		char* uuid_str_ptr = const_cast<char*>(&uuid_str[0]);
+    _return.found = transaction.is_valid();
 
-		::UuidFromStringA((RPC_CSTR)(uuid_str_ptr), &uuid);
-	}
 
-#else
+    const csdb::Currency& currency = transaction.currency();
+    _return.transaction.currency   = currency.to_string();
 
-	void string_to_uuid(const std::string& uuid_str, uuid_t uuid)
-	{
-		char* uuid_str_ptr = const_cast<char*>(&uuid_str[0]);
+    const std::map<csdb::Address, csdb::Amount>& destinations = transaction.destinations();
+    _return.transaction.amount                                = calculateAmount(destinations);
 
-		// FIXME: Probably, this line won't compile
-		uuid_parse(uuid_str_ptr, uuid);
-	}
+    const csdb::TransactionID& id = transaction.id();
+    _return.transaction.innerId = id.to_string();
 
-#endif
+    const csdb::Address& payerAddress = transaction.payer();
+    _return.transaction.source        = payerAddress.to_string();
 
-	static Transaction ConvertTransaction(const csdb::Tran& tran)
-	{
-		Transaction transaction;
+    _return.transaction.destinations  = extractAddresses(transaction.destinations());
+}
 
-		transaction.hash = std::to_string(tran.Hash);
-		transaction.innerId = csdb::uuid_to_string(tran.InnerID);
+void DbHandlers::TransactionsGet(TransactionsGetResult& _return, const Address& address, const int64_t offset, const int64_t limit)
+{
+    const std::vector<csdb::Transaction>& transactions = s_storage.transactions(csdb::Address::from_hex(address)); // правильно так создавать csdb::Address?
 
-		transaction.source = tran.A_source;
-		transaction.target = tran.A_target;
+    // раскомментировать когда появится метод Address::from_string()
+    //    const std::vector<csdb::Transaction>& transactions = s_storage.transactions(csdb::Address::from_string(address));
 
-		transaction.currency = tran.Currency;
-		transaction.amount.integral = tran.Amount;
-		transaction.amount.fraction = tran.Amount1;
+    _return.transactions = convertTransactions(transactions);
+}
 
-		return transaction;
-	}
+void DbHandlers::PoolListGet(PoolListGetResult &_return, const int64_t offset, const int64_t limit)
+{
+    csdb::PoolHash offsetedPoolHash;
+    for (int64_t i = 0; i < offset; ++i)
+    {
+        const csdb::PoolHash& tmp = s_storage.last_hash();
+        offsetedPoolHash = s_storage.pool(tmp).previous_hash();
+    }
 
-	static csdb::Tran ConvertTransaction(const Transaction& transaction)
-	{
-		csdb::Tran tran = {};
+    for (int64_t i = 0; i < limit; ++i)
+    {
+        api::Pool apiPool;
+        const csdb::Pool& csdbPool = s_storage.pool(offsetedPoolHash);
 
-		auto copyStr = [](const std::string& src, char* dst)
-		{
-			memcpy(dst, src.c_str(), std::min((size_t)MAX_STR, src.length()));
-		};
+        apiPool.hash              = offsetedPoolHash.to_string();
+        apiPool.poolNumber        = csdbPool.sequence();
+        apiPool.prevHash          = csdbPool.previous_hash().to_string();
+//      apiPool.time              = // раскомментировать когда появится дополнительное поле
+        apiPool.transactionsCount = csdbPool.transactions_count();
 
-		if (!transaction.hash.empty())
-		{
-			size_t numCharsProcessed = 0;
-			tran.Hash = std::stoull(transaction.hash, &numCharsProcessed, 10);
-		}
+        _return.pools.push_back(apiPool);
+    }
+}
 
-		string_to_uuid(transaction.innerId, tran.InnerID);
+void DbHandlers::PoolInfoGet(PoolInfoGetResult& _return, const PoolHash& hash)
+{
+//    const csdb::TransactionID::from_string(hash);
+    const csdb::PoolHash poolHash;
 
-		copyStr(transaction.source, tran.A_source);
-		copyStr(transaction.target, tran.A_target);
+    const csdb::Pool pool = s_storage.pool(poolHash);
 
-		copyStr(transaction.currency, tran.Currency);
+    _return.isFound = pool.is_valid(); // логически НЕ верно! pool.isValid проверяет есть ли в пуле транзакции! А не найден он или нет
+    // Пул может быть без транзакций. Как понять найден он или нет?
 
-		tran.Amount = transaction.amount.integral;
-		tran.Amount1 = transaction.amount.fraction;
+    _return.pool.hash = poolHash.to_string(); // Выяснить! Какой хеш мы возвращаем (мы же его на вход передаём)
 
-		return tran;
-	}
+    _return.pool.poolNumber = static_cast<int64_t>(pool.sequence());
 
-	bool GetTransaction(const TransactionId& transactionId, Transaction& transaction)
-	{
-		csdb::Tran t = {};
+    const csdb::PoolHash& previousHash = pool.previous_hash();
+    _return.pool.prevHash  = previousHash.to_string();
 
-		bool found = csdb::GetTransactionInfo(t, transactionId);
-		if (!found)
-			return false;
 
-		transaction = ConvertTransaction(t);
+//    _return.pool.time   // Добавить когда появится дополнительное поле в csdb::Pool
 
-		return true;
-	}
+    _return.pool.transactionsCount = pool.transactions_count();
+}
 
-	void TransactionGet(TransactionGetResult& _return, const TransactionId& transactionId)
-	{
-		_return.found = GetTransaction(transactionId, _return.transaction);
-	}
+void DbHandlers::PoolTransactionsGet(PoolTransactionsGetResult& _return, const PoolHash& poolHashString, const int64_t offset, const int64_t limit)
+{
+    const csdb::PoolHash poolHash;
 
-	/// Thats actually a hack
-	// This is because transaction hash should be 'POOL_HASH.TRANSACTION_NUMBER', but it comes from db as integer value.
-	// WORKAROUND: Substitute transaction hash with proper one
-	void SubstituteTransactionHash(api::Transaction& transaction, const std::string& newHash)
-	{
-		transaction.hash = newHash;
-	}
+    csdb::Pool pool = s_storage.pool(poolHash);
 
-	std::string FormatTransactionHash(const std::string& poolHash, size_t transacionNumber)
-	{
-		return poolHash + "." + std::to_string(transacionNumber);
-	}
+    const std::vector<csdb::Transaction>& transactions = pool.transactions();
 
-	void TransactionsGet(TransactionsGetResult& _return, const Address& address, const int64_t offset, const int64_t limit)
-	{
-		typedef std::string TransactionId;
-		typedef std::vector<TransactionId> TransactionIds;
+    _return.transactions = convertTransactions(transactions);
+}
 
-		TransactionIds transactionIds;
+Amount DbHandlers::calculateAmount(const std::map<csdb::Address, csdb::Amount>& destinations)
+{
+    api::Amount result;
 
-		_return.result = csdb::GetTransactions(transactionIds, address.c_str(), (size_t)limit, (size_t)offset);
+    csdb::Amount totalAmount;
+    for (const std::pair<csdb::Address, csdb::Amount>& it : destinations)
+    {
+        totalAmount += it.second;
+    }
 
-		for (auto& id : transactionIds)
-		{
-			Transaction transaction;
-			if (GetTransaction(id, transaction))
-			{
-				SubstituteTransactionHash(transaction, id);
-				_return.transactions.push_back(transaction);
-			}
-		}
-	}
+    result.integral = totalAmount.integral();
+    result.fraction = totalAmount.fraction();
 
-	using PoolNumber = uint64_t;
+    return result;
+}
 
-	void PoolListGet(PoolListGetResult& _return, const int64_t offset, const int64_t limit)
-	{
-		size_t o = (size_t)offset;
+Transactions DbHandlers::convertTransactions(const std::vector<csdb::Transaction>& transactions)
+{
+    api::Transactions result;
 
-		std::string h = csdb::GetHeadHash();
-		while (!h.empty())
-		{
-			if (static_cast<int64_t>(_return.pools.size()) >= limit)
-				break;
+    for (const csdb::Transaction& csdbTransaction : transactions)
+    {
+        api::Transaction apiTransaction;
 
-			typedef std::vector<csdb::Tran> Transactions;
-			Transactions transactions;
+        apiTransaction.amount   = calculateAmount(csdbTransaction.destinations());  // цикл в цикле
 
-			api::Pool pool;
-			pool.hash = h;
+        const csdb::Currency& currency = csdbTransaction.currency();
+        apiTransaction.currency        = currency.to_string();
 
-			time_t pool_time = 0;
-			PoolNumber poolNumber = 0;
-			
-			csdb::GetPool(&h, &pool.prevHash, &transactions, &pool_time, &poolNumber);
-			
-			pool.time = (Time)pool_time;
-			pool.poolNumber = (api::PoolNumber)poolNumber;
+        const csdb::TransactionID& id = csdbTransaction.id();
+        apiTransaction.innerId        = id.to_string(); // inner - внутренний, по логике вещей это верное присваивание. Уточнить!
 
-			pool.transactionsCount = static_cast<int32_t>(transactions.size());
+        const csdb::Address& payerAddress = csdbTransaction.payer();
+        apiTransaction.source             = payerAddress.to_string();
 
-			h = pool.prevHash;
+        apiTransaction.destinations = extractAddresses(csdbTransaction.destinations());
 
-			if (o > 0)
-			{
-				o--;
-				continue;
-			}
+        result.push_back(apiTransaction);
+    }
 
-			_return.pools.push_back(pool);
-		}
-	}
+    return result;
+}
 
-	void PoolGet(PoolGetResult& _return, const PoolHash& hash)
-	{
-		std::string h = csdb::GetHeadHash();
-		while (!h.empty())
-		{
-			if (hash == h)
-			{
-				typedef std::vector<csdb::Tran> Transactions;
-				Transactions transactions;
-
-				api::Pool& pool = _return.pool;
-				pool.hash = hash;
-
-				time_t pool_time = 0;
-				PoolNumber poolNumber = 0;
-
-				csdb::GetPool(&pool.hash, &pool.prevHash, &transactions, &pool_time, &poolNumber);
-
-				pool.time = (Time)pool_time;
-				pool.poolNumber = (api::PoolNumber)poolNumber;
-
-				pool.transactionsCount = static_cast<int32_t>(transactions.size());
-				_return.pool = pool;
-
-				for (size_t i = 0; i < transactions.size(); ++i)
-				{
-					auto& t = transactions[i];
-
-					Transaction transaction = ConvertTransaction(t);
-					std::string newTransactionHash = FormatTransactionHash(hash, i);
-					SubstituteTransactionHash(transaction, newTransactionHash);
-
-					_return.transactions.push_back(transaction);
-				}
-
-				break;
-			}
-			else
-			{
-				std::string ph;
-
-				csdb::GetPool(&h, &ph, nullptr, nullptr, nullptr);
-
-				h = ph;
-			}
-		}
-	}
+Addresses DbHandlers::extractAddresses(const std::map<csdb::Address, csdb::Amount>& destinations)
+{
+    Addresses result;
+    for (const std::pair<csdb::Address, csdb::Amount>& it : destinations)
+    {
+        result.push_back(it.first.to_string());
+    }
+    return result;
 }

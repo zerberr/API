@@ -15,7 +15,7 @@ inline void Log()
 }
 
 template <typename T, typename... Args>
-inline void Log(T t, Args... args)
+inline void Log(T t, Args&&... args)
 {
 	std::cout << t;
 	Log(args...);
@@ -24,19 +24,19 @@ inline void Log(T t, Args... args)
 #else
 
 template <typename... Args>
-inline void Log(Args... args) {}
+inline void Log(Args&&... args) {}
 
 #endif 
 
 #ifdef NDEBUG
 template <typename T, typename... Args>
-inline void DebugLog(T t, Args... args)
+inline void DebugLog(T t, Args&&... args)
 {
 
 }
 #else
 template <typename T, typename... Args>
-inline void DebugLog(T t, Args... args)
+inline void DebugLog(T t, Args&&... args)
 {
     std::cout << t;
     Log(args...);

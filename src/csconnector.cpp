@@ -88,7 +88,7 @@ namespace csconnector
 
 	void start(const Config& config /*= {}*/)
 	{
-		db_handlers::init();
+        DbHandlers::init();
 		detail::start(config);
 		call_stats::start();
 	}
@@ -97,6 +97,6 @@ namespace csconnector
 	{
 		call_stats::stop();
 		detail::stop();
-		db_handlers::deinit();
+        DbHandlers::deinit();
 	}
 }

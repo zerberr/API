@@ -6,7 +6,7 @@ typedef string Currency;
 typedef string Address;
 typedef i64 Time;
 
-struct Amount 
+struct Amount
 {
   1: required i32 integral = 0;
   2: required i64 fraction = 0;
@@ -24,16 +24,17 @@ typedef string TransactionInnerId
 
 struct Transaction
 {
-    1: TransactionHash hash
-    2: TransactionInnerId innerId
-    3: Address source
-    4: Address target
-    5: Amount amount
-    6: Currency currency
+//  1: TransactionHash hash  // removed. Reason: field removed from db (since version csdb_v2)
+    1: TransactionInnerId innerId
+    2: Address source
+    3: Addresses destinations  // now transaction allows set multiple destinations (since version csdb_v2)
+    4: Amount amount
+    5: Currency currency
 }
 
 typedef list<Transaction> Transactions
 typedef list<TransactionId> TransactionIds
+typedef list<Address> Addresses
 
 //
 //  Pools
@@ -119,13 +120,21 @@ struct PoolListGetResult
     3: Pools pools
 }
 
-// PoolGet
+// PoolInfoGet
 
-struct PoolGetResult
+struct PoolInfoGetResult
 {
     1: APIResponse status
-    2: Pool pool
-    3: Transactions transactions
+    2: bool isFound
+    3: Pool pool
+}
+
+// PoolTransactionGet
+
+struct PoolTransactionsGetResult
+{
+    1: APIResponse status
+    2: Transactions transactions
 }
 
 // StatsGet
@@ -136,26 +145,31 @@ struct StatsGetResult
     2: StatsPerPeriod stats
 }
 
-// NodesCountGet
+// NodesInfoGet
 
-struct NodesCountGetResult
+typedef string NodeHash
+typedef list<NodeHash> NodesHashes
+
+struct NodesInfoGetResult
 {
     1: APIResponse status
     2: Count count
+    3: NodesHashes nodesHashes
 }
 
-service API 
+service API
 {
     BalanceGetResult BalanceGet(1:Address address, 2:Currency currency = 'cs')
-   
+
     TransactionGetResult TransactionGet(1:TransactionId transactionId)
     TransactionsGetResult TransactionsGet(1:Address address, 2:i64 offset, 3:i64 limit)
     TransactionFlowResult TransactionFlow(1:Transaction transaction)
-    
+
     PoolListGetResult PoolListGet(1:i64 offset, 2:i64 limit)
-    PoolGetResult PoolGet(1:PoolHash hash)
-    
+    PoolInfoGetResult PoolInfoGet(1:PoolHash hash)
+    PoolTransactionsGetResult PoolTransactionsGet(1:PoolHash hash, 2:i64 offset, 3:i64 limit)
+
     StatsGetResult StatsGet()
 
-    NodesCountGetResult NodesCountGet()
+    NodesInfoGetResult NodesInfoGet()
 }

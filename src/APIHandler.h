@@ -1,38 +1,38 @@
 #ifndef APIHANDLER_H
 #define APIHANDLER_H
 
-#include <mutex>
 #include "APIHandlerInterface.h"
+#include <mutex>
 
 namespace csconnector
 {
-	class APIHandler : public csconnector::APIHandlerInterface
-	{
-	public:
+    class APIHandler : public csconnector::APIHandlerInterface
+    {
+    public:
 
-		APIHandler();
-		~APIHandler();
+        APIHandler()           = default;
+        ~APIHandler() override = default;
 
-		virtual void BalanceGet(api::BalanceGetResult& _return, const api::Address& address, const api::Currency& currency) override;
+        void BalanceGet(api::BalanceGetResult& _return, const api::Address& address, const api::Currency& currency) override;
 
-		virtual void TransactionGet(api::TransactionGetResult& _return, const api::TransactionId& transactionId) override;
-		virtual void TransactionsGet(api::TransactionsGetResult& _return, const api::Address& address, const int64_t offset, const int64_t limit) override;
-		virtual void TransactionFlow(api::TransactionFlowResult& _return, const api::Transaction& transaction) override;
-	
-		// Get list of pools from last one (head pool) to the first one.
-		virtual void PoolListGet(api::PoolListGetResult& _return, const int64_t offset, const int64_t limit) override;
-	
-		// Get pool info by pool hash. Starts looking from last one (head pool).
-		virtual void PoolGet(api::PoolGetResult& _return, const api::PoolHash& hash) override;
+        void TransactionGet(api::TransactionGetResult& _return, const api::TransactionId& transactionId) override;
+        void TransactionsGet(api::TransactionsGetResult& _return, const api::Address& address, const int64_t offset, const int64_t limit) override;
+        void TransactionFlow(api::TransactionFlowResult& _return, const api::Transaction& transaction) override;
 
-		virtual void StatsGet(api::StatsGetResult& _return) override;
+        // Get list of pools from last one (head pool) to the first one.
+        void PoolListGet(api::PoolListGetResult& _return, const int64_t offset, const int64_t limit) override;
 
-        virtual void NodesCountGet(api::NodesCountGetResult& _return) override;
+        // Get pool info by pool hash. Starts looking from last one (head pool).
+        void PoolInfoGet(api::PoolInfoGetResult& _return, const api::PoolHash& hash) override;
+        void PoolTransactionsGet(api::PoolTransactionsGetResult& _return, const api::PoolHash& hash, const int64_t offset, const int64_t limit) override;
+        void StatsGet(api::StatsGetResult& _return) override;
 
-	private:
+        void NodesInfoGet(api::NodesInfoGetResult& _return) override;
 
-		bool GetTransaction(const api::TransactionId& transactionId, api::Transaction& transaction);
-	};
+    private:
+
+        bool GetTransaction(const api::TransactionId& transactionId, api::Transaction& transaction);
+    };
 }
 
 
